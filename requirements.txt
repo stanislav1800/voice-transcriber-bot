@@ -1,2 +1,5 @@
-aiogram>=3.13,<4
-faster-whisper>=1.1,<2
+aiogram==3.31.0
+faster-whisper==1.2.1
+ctranslate2==4.8.2
+# PyAV 19 убрал параметр metadata_errors, который использует faster-whisper 1.2.1
+av==18.1.0
