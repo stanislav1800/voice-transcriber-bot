@@ -1,0 +1,21 @@
+services:
+  bot:
+    build: .
+    container_name: voice-transcriber-bot
+    env_file: .env
+    restart: unless-stopped
+    volumes:
+      - models:/models
+    # Жёсткий лимит: при нехватке памяти OOM-killer убьёт этот контейнер,
+    # а не VPN-сервисы на хосте. Под модель "base" запаса хватает.
+    mem_limit: 450m
+    memswap_limit: 900m
+    cpus: 1.0
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+volumes:
+  models:
