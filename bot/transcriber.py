@@ -1,15 +1,20 @@
-"""Обёртка над faster-whisper. Работает синхронно — вызывать из отдельного потока."""
+"""Распознавание речи через GigaAM-v3 (onnx-asr). Работает синхронно — вызывать из отдельного потока."""
 
 import logging
 from dataclasses import dataclass
 
 import av
-from faster_whisper import WhisperModel
+import numpy as np
+import onnx_asr
+import onnxruntime as rt
 
 log = logging.getLogger(__name__)
 
+SAMPLE_RATE = 16_000
 # Пауза между фрагментами речи, после которой начинается новый абзац
 PARAGRAPH_GAP_SEC = 2.0
+# GigaAM понимает куски до ~25 с, длинную речь режем по паузам через VAD
+MAX_SEGMENT_SEC = 20
 
 
 @dataclass
@@ -37,42 +42,58 @@ def probe_duration(path: str) -> float:
     return 0.0
 
 
+def decode_audio(path: str) -> np.ndarray:
+    """Любой аудио/видео-файл → моно float32, 16 кГц."""
+    chunks: list[np.ndarray] = []
+    resampler = av.AudioResampler(format="flt", layout="mono", rate=SAMPLE_RATE)
+    with av.open(path) as container:
+        stream = next((s for s in container.streams if s.type == "audio"), None)
+        if stream is None:
+            raise ValueError("В файле нет аудиодорожки")
+        for frame in container.decode(stream):
+            for out in resampler.resample(frame):
+                chunks.append(out.to_ndarray().reshape(-1))
+        for out in resampler.resample(None):
+            chunks.append(out.to_ndarray().reshape(-1))
+    if not chunks:
+        return np.zeros(0, dtype=np.float32)
+    return np.concatenate(chunks).astype(np.float32, copy=False)
+
+
 class Transcriber:
-    def __init__(
-        self,
-        model_size: str,
-        models_dir: str,
-        cpu_threads: int,
-        language: str | None,
-        beam_size: int,
-    ) -> None:
-        log.info("Загружаю модель %s (int8, %d потоков)…", model_size, cpu_threads)
-        self._model = WhisperModel(
-            model_size,
-            device="cpu",
-            compute_type="int8",
-            cpu_threads=cpu_threads,
-            num_workers=1,
-            download_root=models_dir,
+    def __init__(self, model_name: str, quantization: str | None, cpu_threads: int) -> None:
+        opts = rt.SessionOptions()
+        opts.intra_op_num_threads = cpu_threads
+        opts.inter_op_num_threads = 1
+        # Не держать арену памяти между запросами — важно при 1 ГБ RAM
+        opts.enable_cpu_mem_arena = False
+
+        log.info("Загружаю модель %s (%s)…", model_name, quantization or "fp32")
+        vad = onnx_asr.load_vad("silero", sess_options=opts)
+        model = onnx_asr.load_model(
+            model_name,
+            quantization=quantization,
+            sess_options=opts,
+            providers=["CPUExecutionProvider"],
         )
-        self._language = language
-        self._beam_size = beam_size
+        self._model = model.with_vad(
+            vad,
+            batch_size=1,
+            max_speech_duration_s=MAX_SEGMENT_SEC,
+            min_silence_duration_ms=300,
+            speech_pad_ms=200,
+        )
         log.info("Модель загружена")
 
     def transcribe(self, path: str, progress: Progress) -> str:
-        segments, info = self._model.transcribe(
-            path,
-            language=self._language,
-            beam_size=self._beam_size,
-            vad_filter=True,
-            vad_parameters={"min_silence_duration_ms": 500},
-            condition_on_previous_text=False,
-        )
-        progress.total = info.duration
+        audio = decode_audio(path)
+        progress.total = len(audio) / SAMPLE_RATE
+        if not len(audio):
+            return ""
 
         paragraphs: list[list[str]] = [[]]
         last_end = 0.0
-        for seg in segments:  # генератор: распознавание идёт по мере итерации
+        for seg in self._model.recognize(audio, sample_rate=SAMPLE_RATE):
             text = seg.text.strip()
             if text:
                 if paragraphs[-1] and seg.start - last_end > PARAGRAPH_GAP_SEC:

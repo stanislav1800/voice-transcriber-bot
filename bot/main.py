@@ -23,16 +23,13 @@ async def main() -> None:
     # Чистим временные файлы, оставшиеся от прошлого запуска
     shutil.rmtree(settings.tmp_dir, ignore_errors=True)
     os.makedirs(settings.tmp_dir, exist_ok=True)
-    os.makedirs(settings.models_dir, exist_ok=True)
 
-    # Модель грузим один раз при старте (при первом запуске она скачается)
+    # Модель грузим один раз при старте (при первом запуске она скачается в HF_HOME)
     transcriber = await asyncio.to_thread(
         Transcriber,
-        settings.model_size,
-        settings.models_dir,
+        settings.asr_model,
+        settings.asr_quantization,
         settings.cpu_threads,
-        settings.language,
-        settings.beam_size,
     )
 
     # Без parse_mode по умолчанию: распознанный текст отправляется как есть

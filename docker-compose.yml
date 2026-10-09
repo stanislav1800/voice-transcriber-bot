@@ -7,9 +7,9 @@ services:
     volumes:
       - models:/models
     # Жёсткий лимит: при нехватке памяти OOM-killer убьёт этот контейнер,
-    # а не VPN-сервисы на хосте. Под модель "base" запаса хватает.
-    mem_limit: 450m
-    memswap_limit: 900m
+    # а не VPN-сервисы на хосте. GigaAM int8 укладывается с запасом.
+    mem_limit: 550m
+    memswap_limit: 1g
     cpus: 1.0
     logging:
       driver: json-file

@@ -1,8 +1,9 @@
 # voice-transcriber-bot
 
-Личный Telegram-бот, который превращает голосовые в текст. Распознавание полностью локальное ([faster-whisper](https://github.com/SYSTRAN/faster-whisper)), рассчитан на слабый сервер: 1 vCPU / 1 ГБ RAM.
+Личный Telegram-бот, который превращает голосовые в текст. Распознавание полностью локальное: модель [GigaAM-v3](https://huggingface.co/ai-sage/GigaAM-v3) от Сбера, обученная на русской речи, через [onnx-asr](https://github.com/istupakov/onnx-asr). Рассчитан на слабый сервер: 1 vCPU / 1 ГБ RAM.
 
 - голосовые, кружки, аудиофайлы и аудио/видео-документы (до 20 МБ — ограничение Bot API);
+- текст сразу с пунктуацией (e2e-модель), длинная речь режется по паузам (Silero VAD);
 - доступ только для ID из `ALLOWED_USERS`, остальным бот не отвечает;
 - задачи выполняются по одной, статус «Распознаю… N%» обновляется в сообщении;
 - длинный текст режется на несколько сообщений;
@@ -19,7 +20,7 @@ docker compose up -d --build
 docker compose logs -f
 ```
 
-При первом запуске скачивается модель (~150 МБ для `base`) в volume `models`, при перезапусках повторно не качается.
+При первом запуске скачивается модель (~230 МБ в int8) в volume `models`, при перезапусках повторно не качается.
 
 Свой Telegram ID: напиши боту `/start` — он ответит «Доступ закрыт. Твой ID: …». Впиши его в `ALLOWED_USERS` и перезапусти: `docker compose up -d`.
 
@@ -29,24 +30,15 @@ docker compose logs -f
 |---|---|---|
 | `BOT_TOKEN` | — | токен от @BotFather |
 | `ALLOWED_USERS` | — | разрешённые Telegram ID через запятую |
-| `WHISPER_MODEL` | `base` | `tiny` / `base` / `small` |
-| `WHISPER_LANGUAGE` | `ru` | код языка или `auto` |
-| `WHISPER_BEAM_SIZE` | `1` | 1 — быстрее, 5 — немного точнее |
-| `WHISPER_CPU_THREADS` | `1` | потоки CPU |
+| `ASR_MODEL` | `gigaam-v3-e2e-rnnt` | или `gigaam-v3-e2e-ctc` — чуть быстрее, чуть менее точная |
+| `ASR_QUANTIZATION` | `int8` | `none` — полная точность (~900 МБ, на 1 ГБ RAM не влезет) |
+| `CPU_THREADS` | `1` | потоки CPU |
 | `MAX_DURATION_MIN` | `10` | лимит длительности записи |
 | `MAX_QUEUE` | `10` | максимум задач в очереди |
 
 ## Память
 
-| Модель | RAM (int8) | Качество на русском |
-|---|---|---|
-| `tiny` | ~150 МБ | слабое |
-| `base` | ~250–300 МБ | среднее |
-| `small` | ~550–700 МБ | хорошее |
-
-Лимит контейнера — 450 МБ (`docker-compose.yml`). Для `small` подними `mem_limit` до ~800m, но только если на сервере реально есть свободная память, иначе модель уйдёт в swap и распознавание станет очень медленным.
-
-На хосте желательно иметь swap как страховку:
+Лимит контейнера — 550 МБ (`docker-compose.yml`), GigaAM в int8 в него укладывается. На хосте желательно иметь swap как страховку:
 
 ```bash
 fallocate -l 2G /swapfile && chmod 600 /swapfile
@@ -66,4 +58,5 @@ HF_ENDPOINT=https://hf-mirror.com
 
 ```bash
 git pull && docker compose up -d --build
+docker image prune -f && docker builder prune -f   # убрать старые образы и кэш сборки
 ```
